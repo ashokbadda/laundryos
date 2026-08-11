@@ -55,17 +55,15 @@ export default function RegisterPage() {
 
     setLoading(false);
     toast.success("Account created successfully! 🎉");
-    router.push("/customer/dashboard");
+    router.push("/"); // Redirects to the Landing Page instead of dashboard
   }
 
   return (
     <div className="min-h-screen bg-slate-950 font-sans text-white antialiased flex items-center justify-center p-4">
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900/90 p-8 sm:p-10 shadow-2xl backdrop-blur-2xl space-y-8 relative overflow-hidden">
         
-        {/* Glowing backdrop ambient light */}
         <div className="absolute -top-24 -left-24 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Top Icon & Header */}
         <div className="text-center space-y-3 relative z-10">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-500/10 text-sky-400 border border-sky-400/30 shadow-lg shadow-sky-500/20">
             <Sparkles className="h-6 w-6" />
@@ -80,9 +78,7 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        {/* Form Fields */}
         <form onSubmit={handleRegister} className="space-y-4 relative z-10">
-          
           <div className="space-y-1.5">
             <label className="block text-[11px] font-black uppercase tracking-wider text-slate-300">Full Name</label>
             <div className="relative">
@@ -152,7 +148,6 @@ export default function RegisterPage() {
           </button>
         </form>
 
-        {/* Footer Link & Security */}
         <div className="text-center space-y-4 pt-2 border-t border-white/10 relative z-10">
           <p className="text-xs text-slate-400">
             Already have an account? <Link href="/login" className="text-sky-400 font-bold hover:underline">Log In Here</Link>

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import CustomerHeader from "@/components/layout/CustomerHeader";
-import { Sparkles, Check, ArrowRight, ShieldCheck, QrCode, WalletCards, Banknote, CreditCard, Lock, Loader2 } from "lucide-react";
+import { Sparkles, Check, ArrowRight, ShieldCheck, QrCode, WalletCards, Banknote, CreditCard, Loader2, Plus, MapPin, Navigation } from "lucide-react";
 import { toast } from "sonner";
 
 export default function CheckoutPage() {
@@ -13,16 +13,18 @@ export default function CheckoutPage() {
   const [addresses, setAddresses] = useState<any[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<any>(null);
   
+  // Inline Address Form State
+  const [showAddAddress, setShowAddAddress] = useState(false);
+  const [newFullName, setNewFullName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newAddressLine, setNewAddressLine] = useState("");
+  const [newCity, setNewCity] = useState("Hyderabad");
+  const [locating, setLocating] = useState(false);
+
   const [pickupDate, setPickupDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [timeWindow, setTimeWindow] = useState("10:00 AM - 12:00 PM");
   
-  // Payment States
   const [paymentMethod, setPaymentMethod] = useState("Razorpay");
-  const [upiId, setUpiId] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
-
   const [instructions, setInstructions] = useState("");
   const [loading, setLoading] = useState(false);
   const [razorpayModal, setRazorpayModal] = useState(false);
@@ -47,12 +49,107 @@ export default function CheckoutPage() {
     if (data && data.length > 0) {
       setAddresses(data);
       setSelectedAddress(data[0]);
+      setShowAddAddress(false);
+    } else {
+      setShowAddAddress(true);
+    }
+  }
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser");
+      return;
+    }
+
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await res.json();
+          if (data && data.display_name) {
+            setNewAddressLine(data.display_name);
+            if (data.address && (data.address.city || data.address.town)) {
+              setNewCity(data.address.city || data.address.town);
+            }
+            toast.success("Current location detected! 📍");
+          } else {
+            setNewAddressLine(`Lat: ${latitude.toFixed(4)}, Lon: ${longitude.toFixed(4)}`);
+            toast.success("Location captured!");
+          }
+        } catch (err) {
+          setNewAddressLine(`Lat: ${latitude.toFixed(4)}, Lon: ${longitude.toFixed(4)}`);
+          toast.success("Location captured!");
+        }
+        setLocating(false);
+      },
+      (error) => {
+        toast.error("Unable to retrieve location.");
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  async function handleSaveNewAddress(e: React.FormEvent) {
+    e.preventDefault();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      toast.error("Please log in to add an address.");
+      router.push("/login");
+      return;
+    }
+
+    // Try primary insert using 'address' column first, fallback to 'address_line1'
+    let { data, error } = await supabase
+      .from("addresses")
+      .insert({
+        user_id: user.id,
+        full_name: newFullName,
+        phone: newPhone,
+        address: newAddressLine,
+        city: newCity,
+      })
+      .select()
+      .single();
+
+    if (error && error.message.includes("column")) {
+      const fallback = await supabase
+        .from("addresses")
+        .insert({
+          user_id: user.id,
+          full_name: newFullName,
+          phone: newPhone,
+          address_line1: newAddressLine,
+          city: newCity,
+        })
+        .select()
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error) {
+      toast.error("Failed to add address: " + error.message);
+    } else {
+      toast.success("Address added successfully!");
+      setAddresses([...addresses, data]);
+      setSelectedAddress(data);
+      setShowAddAddress(false);
+      setNewFullName("");
+      setNewPhone("");
+      setNewAddressLine("");
     }
   }
 
   const subtotal = cart.reduce((acc, item) => acc + (item.price * (item.quantity || 1)), 0);
   const deliveryFee = cart.length > 0 ? 49 : 0;
   const totalPayable = subtotal + (subtotal > 0 ? deliveryFee : 0);
+
+  const handleDateClick = (e: any) => {
+    e.target.showPicker ? e.target.showPicker() : e.target.click();
+  };
 
   async function handleInitialCheckout(e: React.FormEvent) {
     e.preventDefault();
@@ -61,27 +158,15 @@ export default function CheckoutPage() {
       return;
     }
     if (!selectedAddress) {
-      toast.error("Please select a pickup address.");
+      toast.error("Please select or add a pickup address.");
       return;
     }
 
-    if (paymentMethod === "UPI" && !upiId.trim()) {
-      toast.error("Please enter a valid UPI ID.");
-      return;
-    }
-
-    if (paymentMethod === "Card" && (!cardNumber.trim() || !cardExpiry.trim() || !cardCvv.trim())) {
-      toast.error("Please fill in all card details.");
-      return;
-    }
-
-    // If Razorpay is selected, open the official Razorpay Secure Gateway Modal simulation
     if (paymentMethod === "Razorpay") {
       setRazorpayModal(true);
       return;
     }
 
-    // Direct submission for COD, UPI, or Card
     executeOrderPlacement(paymentMethod);
   }
 
@@ -106,7 +191,7 @@ export default function CheckoutPage() {
       .single();
 
     if (orderError || !orderData) {
-      toast.error("Failed to place order: " + (orderError?.message || "Unknown error"));
+      toast.error("Failed to place order.");
       setLoading(false);
       setRazorpayLoading(false);
       setRazorpayModal(false);
@@ -139,7 +224,6 @@ export default function CheckoutPage() {
     }, 1200);
   }
 
-  // SUCCESS CONFIRMATION SCREEN
   if (successOrder) {
     return (
       <div className="relative min-h-screen bg-slate-950 font-sans text-white antialiased flex flex-col items-center justify-center p-4">
@@ -174,7 +258,7 @@ export default function CheckoutPage() {
             onClick={() => router.push(`/customer/orders/${successOrder.id}`)}
             className="w-full flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 py-4 text-xs font-black text-slate-950 shadow-xl shadow-emerald-500/20 transition hover:scale-[1.02] active:scale-95"
           >
-            <span>Continue</span>
+            <span>Continue to Live Tracking</span>
             <ArrowRight className="h-4 w-4 stroke-[3]" />
           </button>
         </div>
@@ -186,7 +270,7 @@ export default function CheckoutPage() {
     <div className="relative min-h-screen bg-slate-950 font-sans text-white antialiased pb-20">
       <CustomerHeader />
 
-      {/* RAZORPAY SECURE GATEWAY MODAL SIMULATION */}
+      {/* RAZORPAY SECURE GATEWAY MODAL */}
       {razorpayModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
           <div className="relative w-full max-w-md rounded-3xl border border-sky-400/30 bg-slate-900 p-6 shadow-2xl space-y-6 text-white">
@@ -239,14 +323,88 @@ export default function CheckoutPage() {
       <main className="max-w-7xl mx-auto px-4 py-8 md:px-6">
         <form onSubmit={handleInitialCheckout} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
+            
             {/* 1. Address Section */}
             <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-4">
-              <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">1</span>
-                Select Pickup Address
-              </h2>
-              {addresses.length === 0 ? (
-                <p className="text-xs text-slate-400">No saved addresses found. Please add one in your profile.</p>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">1</span>
+                  Select Pickup Address
+                </h2>
+                {addresses.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAddress(!showAddAddress)}
+                    className="text-xs font-bold text-sky-400 hover:underline flex items-center gap-1"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> {showAddAddress ? "Cancel" : "Add New Address"}
+                  </button>
+                )}
+              </div>
+
+              {/* Add New Address Form Inline */}
+              {showAddAddress ? (
+                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-sky-300">Add New Pickup Address</h3>
+                    <button
+                      type="button"
+                      onClick={handleUseCurrentLocation}
+                      disabled={locating}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-400/30 rounded-xl text-[11px] font-black transition active:scale-95 disabled:opacity-50"
+                    >
+                      {locating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Navigation className="h-3.5 w-3.5" />}
+                      <span>{locating ? "Detecting GPS..." : "Use Current Location"}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Full Name"
+                      value={newFullName}
+                      onChange={(e) => setNewFullName(e.target.value)}
+                      className="rounded-xl border border-white/10 bg-slate-950 p-2.5 text-xs text-white"
+                    />
+                    <input
+                      type="tel"
+                      required
+                      placeholder="Phone Number"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      className="rounded-xl border border-white/10 bg-slate-950 p-2.5 text-xs text-white"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Street Address / House No / Area"
+                    value={newAddressLine}
+                    onChange={(e) => setNewAddressLine(e.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-2.5 text-xs text-white"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveNewAddress}
+                      className="px-4 py-2 bg-sky-500 text-slate-950 rounded-xl text-xs font-black shadow-md"
+                    >
+                      Save & Select Address
+                    </button>
+                  </div>
+                </div>
+              ) : addresses.length === 0 ? (
+                <div className="text-center py-6 space-y-3">
+                  <p className="text-xs text-slate-400">No saved addresses found. Please add one below.</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAddress(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-500 text-slate-950 rounded-xl text-xs font-black shadow-lg"
+                  >
+                    <Plus className="h-4 w-4" /> Add Address Now
+                  </button>
+                </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
                   {addresses.map((addr) => (
@@ -261,14 +419,14 @@ export default function CheckoutPage() {
                     >
                       <h3 className="text-xs font-black text-white">{addr.full_name}</h3>
                       <p className="text-xs text-slate-400 mt-1">{addr.phone}</p>
-                      <p className="text-[11px] text-slate-500 mt-2 line-clamp-2">{addr.address_line1}, {addr.city}</p>
+                      <p className="text-[11px] text-slate-500 mt-2 line-clamp-2">{addr.address || addr.address_line1}, {addr.city}</p>
                     </div>
                   ))}
                 </div>
               )}
             </div>
 
-            {/* 2. Slot & Instructions (Date picker interactive and clean) */}
+            {/* 2. Slot & Instructions */}
             <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-4">
               <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">2</span>
@@ -282,6 +440,8 @@ export default function CheckoutPage() {
                     required
                     value={pickupDate}
                     min={new Date().toISOString().split("T")[0]}
+                    onClick={handleDateClick}
+                    onKeyDown={(e) => e.preventDefault()}
                     onChange={(e) => setPickupDate(e.target.value)}
                     className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer"
                   />
@@ -311,7 +471,7 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            {/* 3. Unique Modern Payment Options Including Razorpay */}
+            {/* 3. Payment Method Section */}
             <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-6">
               <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">3</span>
@@ -359,66 +519,10 @@ export default function CheckoutPage() {
                 })}
               </div>
 
-              {/* Dynamic Sub-Inputs */}
               {paymentMethod === "Razorpay" && (
                 <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 text-xs font-medium text-sky-300 animate-fade-in flex items-center gap-3">
                   <ShieldCheck className="h-5 w-5 text-sky-400 flex-shrink-0" />
                   <span>You will be prompted with Razorpay's secure checkout modal upon clicking Pay & Place Order.</span>
-                </div>
-              )}
-
-              {paymentMethod === "UPI" && (
-                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 space-y-2 animate-fade-in">
-                  <label className="block text-xs font-black text-sky-300">Enter UPI ID / VPA</label>
-                  <input
-                    type="text"
-                    required
-                    value={upiId}
-                    onChange={(e) => setUpiId(e.target.value)}
-                    placeholder="e.g. username@oksbi or 9876543210@paytm"
-                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                  />
-                </div>
-              )}
-
-              {paymentMethod === "Card" && (
-                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 space-y-3 animate-fade-in">
-                  <label className="block text-xs font-black text-sky-300">Card Information</label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={19}
-                    value={cardNumber}
-                    onChange={(e) => setCardNumber(e.target.value)}
-                    placeholder="Card Number (4444 4444 4444 4444)"
-                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      required
-                      maxLength={5}
-                      value={cardExpiry}
-                      onChange={(e) => setCardExpiry(e.target.value)}
-                      placeholder="MM/YY"
-                      className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                    />
-                    <input
-                      type="password"
-                      required
-                      maxLength={4}
-                      value={cardCvv}
-                      onChange={(e) => setCardCvv(e.target.value)}
-                      placeholder="CVV"
-                      className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {paymentMethod === "COD" && (
-                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-xs font-medium text-emerald-300 animate-fade-in">
-                  💵 Cash or online QR payment will be collected by our delivery partner during doorstep pickup.
                 </div>
               )}
             </div>
@@ -462,7 +566,7 @@ export default function CheckoutPage() {
                 disabled={loading || cart.length === 0}
                 className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 py-4 text-xs font-black text-white shadow-xl shadow-sky-500/30 transition hover:scale-[1.02] active:scale-95 disabled:opacity-50"
               >
-                {loading ? "Processing..." : `Pay ₹{totalPayable} & Place Order`} <ArrowRight className="h-4 w-4" />
+                {loading ? "Processing..." : `Pay ₹${totalPayable} & Place Order`} <ArrowRight className="h-4 w-4" />
               </button>
 
               <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 font-semibold">
