@@ -55,11 +55,33 @@ export default function ServicesPage() {
     let result = [...services];
 
     if (selectedCategory !== "All Services") {
-      result = result.filter(
-        (s) =>
-          (s.category || "").toLowerCase() ===
-          selectedCategory.toLowerCase().replace("by ", "")
-      );
+      const queryCat = selectedCategory.toLowerCase();
+      result = result.filter((s) => {
+        const cat = (s.category || "").toLowerCase();
+        const name = (s.name || "").toLowerCase();
+
+        // Smart keyword mapping for database variations
+        if (queryCat === "steam iron") {
+          return cat.includes("iron") || name.includes("iron");
+        }
+        if (queryCat === "wash & fold") {
+          return cat.includes("wash") || name.includes("wash") || name.includes("fold");
+        }
+        if (queryCat === "dry clean") {
+          return cat.includes("dry") || name.includes("dry") || name.includes("suiting") || name.includes("saree");
+        }
+        if (queryCat === "formals") {
+          return cat.includes("formal") || name.includes("formal") || name.includes("shirt") || name.includes("suit");
+        }
+        if (queryCat === "bedding") {
+          return cat.includes("bed") || name.includes("bed") || name.includes("blanket");
+        }
+        if (queryCat === "footwear") {
+          return cat.includes("shoe") || name.includes("shoe") || name.includes("footwear");
+        }
+
+        return cat.includes(queryCat);
+      });
     }
 
     if (searchQuery.trim() !== "") {
