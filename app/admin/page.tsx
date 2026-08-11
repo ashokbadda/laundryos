@@ -2,98 +2,149 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
-import { BarChart3, Package, Truck, Users, Sparkles, ArrowUpRight } from "lucide-react";
+import {
+  Users,
+  Search,
+  Phone,
+  MapPin,
+  Sparkles,
+  UserCheck,
+  Loader2,
+} from "lucide-react";
+import { toast } from "sonner";
 
-export default function AdminDashboard() {
-  const [stats, setStats] = useState({
-    ordersCount: 0,
-    customersCount: 0,
-    revenue: 0,
-    pendingPickups: 0,
-  });
+export default function AdminCustomersPage() {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [filteredCustomers, setFilteredCustomers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
-    async function fetchStats() {
-      try {
-        const { count: ordersCount } = await supabase.from("orders").select("*", { count: "exact", head: true });
-        const { count: customersCount } = await supabase.from("profiles").select("*", { count: "exact", head: true }).eq("role", "customer");
-        const { data: ordersData } = await supabase.from("orders").select("total, status");
-
-        let totalRev = 0;
-        let pending = 0;
-        ordersData?.forEach((o) => {
-          totalRev += Number(o.total || 0);
-          if (o.status === "PLACED" || o.status === "PICKUP_ASSIGNED") {
-            pending++;
-          }
-        });
-
-        setStats({
-          ordersCount: ordersCount || 0,
-          customersCount: customersCount || 0,
-          revenue: totalRev,
-          pendingPickups: pending,
-        });
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchStats();
+    fetchCustomers();
   }, []);
 
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
+      setFilteredCustomers(customers);
+    } else {
+      const q = searchQuery.toLowerCase();
+      setFilteredCustomers(
+        customers.filter(
+          (c) =>
+            c.full_name?.toLowerCase().includes(q) ||
+            c.phone?.includes(q) ||
+            c.city?.toLowerCase().includes(q) ||
+            c.address?.toLowerCase().includes(q)
+        )
+      );
+    }
+  }, [searchQuery, customers]);
+
+  async function fetchCustomers() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("addresses")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      toast.error("Failed to load customer directory.");
+    } else if (data) {
+      setCustomers(data);
+      setFilteredCustomers(data);
+    }
+    setLoading(false);
+  }
+
   return (
-    <div className="space-y-8 font-sans text-white antialiased pb-20">
+    <div className="min-h-screen bg-slate-950 font-sans text-white antialiased p-6 md:p-8 space-y-6">
       {/* Header */}
-      <div className="border-b border-white/10 pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
         <div>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-0.5 text-xs font-black text-sky-300 mb-2">
-            <Sparkles className="h-3.5 w-3.5 text-cyan-300" /> Admin Control Hub
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-0.5 text-xs font-black text-sky-300 mb-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-cyan-300" /> User Database
           </span>
-          <h1 className="text-3xl font-black tracking-tight text-white">Dashboard Overview</h1>
-          <p className="text-xs font-medium text-slate-400 mt-1">
-            Real-time revenue, order volume, and dispatch analytics for LaundryOS.
+          <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
+            Customers Directory 👥
+          </h1>
+          <p className="text-xs font-semibold text-slate-400 mt-0.5">
+            Registered customer profiles, contact numbers, and delivery addresses
           </p>
         </div>
-      </div>
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl shadow-2xl space-y-2">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Revenue</p>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-black text-white">₹{stats.revenue}</span>
-            <span className="text-xs font-bold text-emerald-400 flex items-center">+12.7% <ArrowUpRight className="h-3 w-3" /></span>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl shadow-2xl space-y-2">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Orders</p>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-black text-white">{stats.ordersCount}</span>
-            <span className="text-xs font-bold text-sky-400 flex items-center">+8.4% <ArrowUpRight className="h-3 w-3" /></span>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl shadow-2xl space-y-2">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pending Pickups</p>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-black text-amber-400">{stats.pendingPickups}</span>
-            <span className="text-xs font-bold text-amber-400/80">Awaiting Dispatch</span>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl shadow-2xl space-y-2">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Registered Users</p>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-black text-cyan-400">{stats.customersCount}</span>
-            <span className="text-xs font-bold text-slate-400">Active Database</span>
+        <div className="flex items-center gap-3">
+          <div className="rounded-2xl border border-white/10 bg-slate-900 px-4 py-2 text-center shadow-2xl">
+            <span className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              Total Saved Locations
+            </span>
+            <span className="text-base font-black text-white">{customers.length}</span>
           </div>
         </div>
       </div>
+
+      {/* Search Input Bar */}
+      <div className="bg-slate-900/80 p-4 rounded-2xl border border-white/10 shadow-xl backdrop-blur-xl">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search customer name, phone, or address..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-white/10 bg-slate-950 pl-10 pr-4 py-2.5 text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400"
+          />
+        </div>
+      </div>
+
+      {/* Customer Cards Grid */}
+      {loading ? (
+        <div className="py-20 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-sky-400 mb-2" />
+          <p className="text-xs font-bold text-slate-400">Loading customers directory...</p>
+        </div>
+      ) : filteredCustomers.length === 0 ? (
+        <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-12 text-center text-xs font-bold text-slate-400 shadow-2xl">
+          <Users className="mx-auto h-8 w-8 text-slate-600 mb-2" />
+          No customers found matching your search query.
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filteredCustomers.map((cust) => (
+            <div
+              key={cust.id}
+              className="rounded-3xl border border-white/10 bg-slate-900/80 p-5 shadow-2xl backdrop-blur-xl transition hover:border-sky-400/30 space-y-4"
+            >
+              <div className="flex items-center gap-3 border-b border-white/10 pb-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-500/10 border border-sky-400/20 font-black text-sm text-sky-300 uppercase">
+                  {cust.full_name?.charAt(0) || "U"}
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-white uppercase tracking-tight">
+                    {cust.full_name || "Customer Name"}
+                  </h2>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/20">
+                    <UserCheck className="h-3 w-3" /> Registered Customer
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs font-semibold text-slate-300">
+                <div className="flex items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                  <span className="font-bold text-white">{cust.phone || "No Phone Registered"}</span>
+                </div>
+
+                <div className="flex items-start gap-2">
+                  <MapPin className="h-3.5 w-3.5 text-sky-400 shrink-0 mt-0.5" />
+                  <span className="text-slate-400 leading-relaxed">
+                    {cust.address || cust.street}, {cust.city} - {cust.pincode}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
