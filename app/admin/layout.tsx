@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -11,6 +12,8 @@ import {
   Settings,
   Sparkles,
   LogOut,
+  Menu,
+  X,
 } from "lucide-react";
 
 const navItems = [
@@ -24,13 +27,26 @@ const navItems = [
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
     <div className="flex min-h-screen bg-slate-950 font-sans text-white antialiased selection:bg-sky-500 selection:text-white">
+      {/* Mobile Menu Toggle Button */}
+      <button
+        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-slate-900 rounded-xl border border-white/10 text-sky-400"
+      >
+        {isSidebarOpen ? <X /> : <Menu />}
+      </button>
+
       {/* Shared Dark Sidebar */}
-      <aside className="w-64 shrink-0 min-h-screen bg-slate-950 border-r border-white/10 flex flex-col justify-between p-4 font-sans text-white">
+      <aside
+        className={`${
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        } md:translate-x-0 fixed md:static z-40 w-64 h-screen bg-slate-950 border-r border-white/10 flex flex-col justify-between p-4 transition-transform duration-300 ease-in-out`}
+      >
         <div className="space-y-6">
-          <div className="flex items-center gap-3 px-3 py-2">
+          <div className="flex items-center gap-3 px-3 py-2 mt-12 md:mt-0">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-sky-500 to-blue-600 shadow-lg shadow-sky-500/30 text-white font-black">
               <Sparkles className="h-5 w-5" />
             </div>
@@ -53,6 +69,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => setIsSidebarOpen(false)}
                   className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-xs font-black transition-all ${
                     isActive
                       ? "bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-500/25"
@@ -78,7 +95,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </aside>
 
-      <div className="flex-1 overflow-x-hidden p-6 md:p-8">{children}</div>
+      {/* Main Content Area */}
+      <div className="flex-1 overflow-x-hidden p-6 md:p-8 mt-16 md:mt-0">
+        {children}
+      </div>
     </div>
   );
 }
