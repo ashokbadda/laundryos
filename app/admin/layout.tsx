@@ -34,12 +34,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* Mobile Menu Toggle Button */}
       <button
         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-slate-900 rounded-xl border border-white/10 text-sky-400"
+        className="md:hidden fixed top-4 left-4 z-50 p-2.5 bg-slate-900 rounded-xl border border-white/10 text-sky-400 shadow-lg"
       >
-        {isSidebarOpen ? <X /> : <Menu />}
+        {isSidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
       </button>
 
-      {/* Shared Dark Sidebar */}
+      {/* Shared Dark Sidebar / Drawer */}
       <aside
         className={`${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -96,7 +96,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-x-hidden p-6 md:p-8 mt-16 md:mt-0">
+      <div className="flex-1 overflow-x-hidden p-6 md:p-8 mt-16 md:mt-0 bg-slate-950">
         {children}
       </div>
     </div>

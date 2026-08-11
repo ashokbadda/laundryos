@@ -16,7 +16,6 @@ export default function CustomersDirectory() {
 
   async function fetchCustomers() {
     setLoading(true);
-    // Fetch all profiles where role is 'customer'
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
@@ -30,7 +29,6 @@ export default function CustomersDirectory() {
     setLoading(false);
   }
 
-  // Filter customers based on search
   const filteredCustomers = customers.filter(
     (c) =>
       c.full_name?.toLowerCase().includes(search.toLowerCase()) ||
