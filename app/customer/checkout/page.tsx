@@ -2,497 +2,476 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import CustomerHeader from "@/components/layout/CustomerHeader";
 import { supabase } from "@/lib/supabase/client";
-import {
-  Calendar,
-  Clock,
-  ShieldCheck,
-  CreditCard,
-  Banknote,
-  Sparkles,
-  ArrowRight,
-  Plus,
-  Smartphone,
-} from "lucide-react";
+import CustomerHeader from "@/components/layout/CustomerHeader";
+import { Sparkles, Check, ArrowRight, ShieldCheck, QrCode, WalletCards, Banknote, CreditCard, Lock, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const [cart, setCart] = useState<any[]>([]);
   const [addresses, setAddresses] = useState<any[]>([]);
-  const [selectedAddressId, setSelectedAddressId] = useState<number | null>(null);
+  const [selectedAddress, setSelectedAddress] = useState<any>(null);
   
   const [pickupDate, setPickupDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [timeSlot, setTimeSlot] = useState("10:00 AM - 12:00 PM");
-  const [specialInstructions, setSpecialInstructions] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("Online / UPI");
-  const [onlineType, setOnlineType] = useState<"upi" | "card">("upi");
+  const [timeWindow, setTimeWindow] = useState("10:00 AM - 12:00 PM");
+  
+  // Payment States
+  const [paymentMethod, setPaymentMethod] = useState("Razorpay");
   const [upiId, setUpiId] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvv, setCardCvv] = useState("");
 
-  const [cartItems, setCartItems] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [instructions, setInstructions] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [razorpayModal, setRazorpayModal] = useState(false);
+  const [razorpayLoading, setRazorpayLoading] = useState(false);
+  const [successOrder, setSuccessOrder] = useState<any>(null);
 
   useEffect(() => {
-    fetchCheckoutData();
+    const localCart = JSON.parse(localStorage.getItem("laundry_cart") || "[]");
+    setCart(localCart);
+    fetchUserAddresses();
   }, []);
 
-  async function fetchCheckoutData() {
-    setLoading(true);
+  async function fetchUserAddresses() {
     const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
 
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-
-    const { data: addressData } = await supabase
+    const { data } = await supabase
       .from("addresses")
       .select("*")
       .eq("user_id", user.id);
 
-    if (addressData && addressData.length > 0) {
-      setAddresses(addressData);
-      setSelectedAddressId(addressData[0].id);
+    if (data && data.length > 0) {
+      setAddresses(data);
+      setSelectedAddress(data[0]);
     }
-
-    const localCart = JSON.parse(localStorage.getItem("laundry_cart") || "[]");
-    setCartItems(localCart);
-
-    setLoading(false);
   }
 
-  const subtotal = cartItems.reduce(
-    (sum, item) => sum + item.price * (item.quantity || 1),
-    0
-  );
-  const deliveryFee = subtotal > 499 || subtotal === 0 ? 0 : 49;
-  const totalPayable = subtotal + deliveryFee;
+  const subtotal = cart.reduce((acc, item) => acc + (item.price * (item.quantity || 1)), 0);
+  const deliveryFee = cart.length > 0 ? 49 : 0;
+  const totalPayable = subtotal + (subtotal > 0 ? deliveryFee : 0);
 
-  const handlePlaceOrder = async (e: React.FormEvent) => {
+  async function handleInitialCheckout(e: React.FormEvent) {
     e.preventDefault();
-
-    if (!selectedAddressId) {
+    if (cart.length === 0) {
+      toast.error("Your cart is empty!");
+      return;
+    }
+    if (!selectedAddress) {
       toast.error("Please select a pickup address.");
       return;
     }
-    if (!pickupDate) {
-      toast.error("Please select a pickup date.");
-      return;
-    }
-    if (paymentMethod === "Online / UPI") {
-      if (onlineType === "upi" && !upiId.trim()) {
-        toast.error("Please enter your UPI ID (e.g. user@paytm).");
-        return;
-      }
-      if (onlineType === "card" && (!cardNumber.trim() || !cardExpiry.trim() || !cardCvv.trim())) {
-        toast.error("Please fill in your complete card details.");
-        return;
-      }
-    }
-    if (cartItems.length === 0) {
-      toast.error("Your cart is empty.");
+
+    if (paymentMethod === "UPI" && !upiId.trim()) {
+      toast.error("Please enter a valid UPI ID.");
       return;
     }
 
-    setSubmitting(true);
+    if (paymentMethod === "Card" && (!cardNumber.trim() || !cardExpiry.trim() || !cardCvv.trim())) {
+      toast.error("Please fill in all card details.");
+      return;
+    }
+
+    // If Razorpay is selected, open the official Razorpay Secure Gateway Modal simulation
+    if (paymentMethod === "Razorpay") {
+      setRazorpayModal(true);
+      return;
+    }
+
+    // Direct submission for COD, UPI, or Card
+    executeOrderPlacement(paymentMethod);
+  }
+
+  async function executeOrderPlacement(methodUsed: string) {
+    setLoading(true);
+    setRazorpayLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
 
-    let orderPayload: any = {
-      user_id: user?.id,
-      address_id: selectedAddressId,
-      pickup_date: pickupDate,
-      time_slot: timeSlot,
-      payment_method: paymentMethod === "Online / UPI" ? `Online (${onlineType.toUpperCase()})` : "Cash on Delivery",
-      payment_status: paymentMethod === "Cash on Delivery" ? "Pending (COD)" : "Paid",
-      status: "pending",
-      total: totalPayable,
-      special_instructions: specialInstructions,
-    };
-
-    let { data: orderData, error: orderError } = await supabase
+    const { data: orderData, error: orderError } = await supabase
       .from("orders")
-      .insert(orderPayload)
+      .insert({
+        user_id: user?.id || null,
+        address_id: selectedAddress.id,
+        total: totalPayable,
+        status: "PLACED",
+        pickup_date: pickupDate,
+        pickup_slot: timeWindow,
+        payment_method: methodUsed,
+        special_instructions: instructions,
+      })
       .select()
       .single();
 
-    if (orderError && orderError.message.includes("time_slot")) {
-      delete orderPayload.time_slot;
-    }
-    if (orderError && orderError.message.includes("special_instructions")) {
-      delete orderPayload.special_instructions;
-    }
-
-    if (orderError) {
-      const retry = await supabase
-        .from("orders")
-        .insert(orderPayload)
-        .select()
-        .single();
-      
-      orderData = retry.data;
-      orderError = retry.error;
-    }
-
-    if (orderError) {
-      toast.error("Failed to place order: " + orderError.message);
-      setSubmitting(false);
+    if (orderError || !orderData) {
+      toast.error("Failed to place order: " + (orderError?.message || "Unknown error"));
+      setLoading(false);
+      setRazorpayLoading(false);
+      setRazorpayModal(false);
       return;
     }
 
-    const orderItemsPayload = cartItems.map((item) => ({
+    const orderItems = cart.map((item) => ({
       order_id: orderData.id,
       service_id: item.id,
       quantity: item.quantity || 1,
       price: item.price,
     }));
 
-    await supabase.from("order_items").insert(orderItemsPayload);
-
-    await supabase.from("notifications").insert({
-      user_id: user?.id,
-      title: `Order #${orderData.id} Confirmed! 🎉`,
-      message: `Your laundry pickup has been scheduled successfully for ${pickupDate}. Our partner will arrive shortly.`,
-      is_read: false,
-    });
+    await supabase.from("order_items").insert(orderItems);
 
     localStorage.removeItem("laundry_cart");
     window.dispatchEvent(new CustomEvent("cartUpdated"));
-    toast.success("Order placed & payment verified successfully! 🎉");
-    router.push(`/customer/orders/${orderData.id}`);
-  };
 
-  return (
-    <div className="relative min-h-screen bg-slate-950 font-sans text-white antialiased selection:bg-sky-500 selection:text-white pb-16">
-      <div className="fixed -left-20 top-20 z-0 h-96 w-96 rounded-full bg-sky-500/10 blur-3xl pointer-events-none animate-pulse" />
-      <div className="fixed -right-20 bottom-10 z-0 h-96 w-96 rounded-full bg-cyan-400/10 blur-3xl pointer-events-none animate-pulse" />
+    setTimeout(() => {
+      setLoading(false);
+      setRazorpayLoading(false);
+      setRazorpayModal(false);
+      toast.success("Payment verified & order confirmed!");
 
-      <div className="relative z-10">
-        <CustomerHeader />
+      setSuccessOrder({
+        ...orderData,
+        address: selectedAddress,
+        items: cart,
+      });
+    }, 1200);
+  }
 
-        <main className="mx-auto max-w-6xl px-4 py-8 md:py-10">
-          <div className="mb-6 border-b border-white/10 pb-4">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-0.5 text-xs font-black text-sky-300 mb-1">
-              <Sparkles className="h-3.5 w-3.5 text-cyan-300" /> Secure Checkout
-            </span>
-            <h1 className="text-2xl font-black tracking-tight text-white">
-              Complete Your Booking 🧺
-            </h1>
+  // SUCCESS CONFIRMATION SCREEN
+  if (successOrder) {
+    return (
+      <div className="relative min-h-screen bg-slate-950 font-sans text-white antialiased flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-3xl border border-emerald-500/30 bg-slate-900/90 p-8 shadow-2xl backdrop-blur-2xl text-center space-y-6">
+          <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 shadow-xl shadow-emerald-500/20 animate-bounce">
+            <Check className="h-12 w-12 stroke-[3]" />
           </div>
 
-          {loading ? (
-            <div className="py-20 text-center">
-              <div className="inline-flex h-8 w-8 animate-spin items-center justify-center rounded-full border-2 border-sky-400 border-t-transparent" />
-              <p className="mt-3 text-xs font-bold text-slate-400">Loading checkout session...</p>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-black text-white tracking-tight">Your order is confirmed</h1>
+            <p className="text-xs font-medium text-slate-400">
+              Thank you for choosing LaundryOS. Your invoice and pickup have been registered.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-left space-y-3">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2 text-xs">
+              <span className="text-slate-400 font-bold">Order ID</span>
+              <span className="text-sky-400 font-black">#{successOrder.id}</span>
             </div>
-          ) : (
-            <form onSubmit={handlePlaceOrder} className="grid gap-8 lg:grid-cols-12">
-              <div className="lg:col-span-7 space-y-6">
-                
-                {/* Step 1: Address */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/80 backdrop-blur-xl p-6 shadow-2xl space-y-4">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                    <h2 className="text-xs font-black text-sky-400 uppercase tracking-widest flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-slate-950 text-xs font-black">1</span>
-                      Select Pickup Address
-                    </h2>
-                  </div>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2 text-xs">
+              <span className="text-slate-400 font-bold">Total Amount Paid</span>
+              <span className="text-emerald-400 font-black">₹{successOrder.total}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs pt-1">
+              <span className="text-slate-400 font-bold">Pickup Slot</span>
+              <span className="text-white font-semibold">{successOrder.pickup_date} ({successOrder.pickup_slot})</span>
+            </div>
+          </div>
 
-                  {addresses.length === 0 ? (
-                    <div className="text-center py-4">
-                      <p className="text-xs text-slate-400 mb-3">No saved addresses found.</p>
-                      <Link
-                        href="/customer/addresses"
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2 text-xs font-black text-white"
-                      >
-                        <Plus className="h-4 w-4" /> Add New Address
-                      </Link>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {addresses.map((addr) => (
-                        <label
-                          key={addr.id}
-                          className={`flex items-start gap-3 rounded-2xl border p-4 cursor-pointer transition ${
-                            selectedAddressId === addr.id
-                              ? "border-sky-400 bg-sky-500/10 shadow-lg"
-                              : "border-white/10 bg-slate-950/60 hover:border-white/20"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="address"
-                            checked={selectedAddressId === addr.id}
-                            onChange={() => setSelectedAddressId(addr.id)}
-                            className="mt-1 accent-sky-500"
-                          />
-                          <div className="space-y-1 text-xs">
-                            <p className="font-black text-white">{addr.full_name}</p>
-                            <p className="font-bold text-slate-400">{addr.phone}</p>
-                            <p className="text-slate-300 leading-relaxed">
-                              {addr.address || addr.street}, {addr.city} - {addr.pincode}
-                            </p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  )}
+          <button
+            onClick={() => router.push(`/customer/orders/${successOrder.id}`)}
+            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 py-4 text-xs font-black text-slate-950 shadow-xl shadow-emerald-500/20 transition hover:scale-[1.02] active:scale-95"
+          >
+            <span>Continue</span>
+            <ArrowRight className="h-4 w-4 stroke-[3]" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative min-h-screen bg-slate-950 font-sans text-white antialiased pb-20">
+      <CustomerHeader />
+
+      {/* RAZORPAY SECURE GATEWAY MODAL SIMULATION */}
+      {razorpayModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="relative w-full max-w-md rounded-3xl border border-sky-400/30 bg-slate-900 p-6 shadow-2xl space-y-6 text-white">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-xl bg-sky-500 flex items-center justify-center font-black text-slate-950 text-sm">R</div>
+                <div>
+                  <h3 className="text-sm font-black">Razorpay Secure</h3>
+                  <p className="text-[10px] text-slate-400">Trusted Business Checkout</p>
                 </div>
+              </div>
+              <span className="text-xs font-black text-sky-400 bg-sky-500/10 px-3 py-1 rounded-full border border-sky-400/20">
+                ₹{totalPayable}
+              </span>
+            </div>
 
-                {/* Step 2: Slot */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/80 backdrop-blur-xl p-6 shadow-2xl space-y-4">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                    <h2 className="text-xs font-black text-sky-400 uppercase tracking-widest flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-slate-950 text-xs font-black">2</span>
-                      Pickup Slot & Special Instructions
-                    </h2>
+            <div className="space-y-4 text-center py-4">
+              {razorpayLoading ? (
+                <div className="space-y-3 py-6">
+                  <Loader2 className="h-10 w-10 animate-spin text-sky-400 mx-auto" />
+                  <p className="text-xs font-bold text-slate-300">Processing secure payment via Razorpay...</p>
+                  <p className="text-[10px] text-slate-500">Please do not refresh or close this window.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-400/20 text-left space-y-1">
+                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 block">MERCHANT</span>
+                    <p className="text-xs font-black text-white">LaundryOS Fabric Care Pvt Ltd</p>
+                    <p className="text-[11px] text-sky-300">Payable Amount: ₹{totalPayable}</p>
                   </div>
+                  <button
+                    onClick={() => executeOrderPlacement("Razorpay")}
+                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 text-xs font-black text-white shadow-xl shadow-sky-500/30 hover:scale-[1.02] transition"
+                  >
+                    Pay ₹{totalPayable} Now
+                  </button>
+                  <button
+                    onClick={() => setRazorpayModal(false)}
+                    className="text-xs font-bold text-slate-400 hover:text-white transition"
+                  >
+                    Cancel & Return
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
-                  <div className="grid gap-4 sm:grid-cols-2 text-xs">
-                    <div className="space-y-1.5">
-                      <label className="block font-black text-slate-300 uppercase tracking-wider">
-                        Pickup Date
-                      </label>
-                      <div className="relative">
-                        <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                        <input
-                          type="date"
-                          required
-                          value={pickupDate}
-                          min={new Date().toISOString().split("T")[0]}
-                          onChange={(e) => setPickupDate(e.target.value)}
-                          onClick={(e) => (e.currentTarget as HTMLInputElement).showPicker?.()}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 pl-10 pr-4 py-3 font-semibold text-white focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer select-none"
-                          style={{ colorScheme: "dark" }}
-                        />
+      <main className="max-w-7xl mx-auto px-4 py-8 md:px-6">
+        <form onSubmit={handleInitialCheckout} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+            {/* 1. Address Section */}
+            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-4">
+              <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">1</span>
+                Select Pickup Address
+              </h2>
+              {addresses.length === 0 ? (
+                <p className="text-xs text-slate-400">No saved addresses found. Please add one in your profile.</p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {addresses.map((addr) => (
+                    <div
+                      key={addr.id}
+                      onClick={() => setSelectedAddress(addr)}
+                      className={`cursor-pointer rounded-2xl border p-4 transition-all ${
+                        selectedAddress?.id === addr.id
+                          ? "border-sky-400 bg-sky-500/10 shadow-lg shadow-sky-500/20"
+                          : "border-white/10 bg-slate-950/60 hover:border-white/20"
+                      }`}
+                    >
+                      <h3 className="text-xs font-black text-white">{addr.full_name}</h3>
+                      <p className="text-xs text-slate-400 mt-1">{addr.phone}</p>
+                      <p className="text-[11px] text-slate-500 mt-2 line-clamp-2">{addr.address_line1}, {addr.city}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 2. Slot & Instructions (Date picker interactive and clean) */}
+            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-4">
+              <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">2</span>
+                Pickup Slot & Special Instructions
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-400">Pickup Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={pickupDate}
+                    min={new Date().toISOString().split("T")[0]}
+                    onChange={(e) => setPickupDate(e.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-400">Time Window</label>
+                  <select
+                    value={timeWindow}
+                    onChange={(e) => setTimeWindow(e.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer"
+                  >
+                    <option value="08:00 AM - 10:00 AM">08:00 AM - 10:00 AM</option>
+                    <option value="10:00 AM - 12:00 PM">10:00 AM - 12:00 PM</option>
+                    <option value="04:00 PM - 06:00 PM">04:00 PM - 06:00 PM</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1.5 pt-2">
+                <label className="text-xs font-bold text-slate-400">Special Instructions (Optional)</label>
+                <textarea
+                  rows={2}
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder="e.g. Ring doorbell twice, delicate fabrics..."
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                />
+              </div>
+            </div>
+
+            {/* 3. Unique Modern Payment Options Including Razorpay */}
+            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-6">
+              <h2 className="text-sm font-black uppercase tracking-wider text-sky-400 flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/20 text-sky-300 text-xs">3</span>
+                Select Payment Method
+              </h2>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                {[
+                  { id: "Razorpay", title: "Razorpay", subtitle: "Secure Gateway", icon: CreditCard },
+                  { id: "UPI", title: "Instant UPI", subtitle: "GPay, PhonePe", icon: QrCode },
+                  { id: "Card", title: "Debit/Credit", subtitle: "Cards & NetBank", icon: WalletCards },
+                  { id: "COD", title: "Cash on Pickup", subtitle: "Pay when picked", icon: Banknote },
+                ].map((method) => {
+                  const Icon = method.icon;
+                  const isSelected = paymentMethod === method.id;
+
+                  return (
+                    <div
+                      key={method.id}
+                      onClick={() => setPaymentMethod(method.id)}
+                      className={`cursor-pointer rounded-2xl border p-4 flex flex-col justify-between space-y-3 transition-all ${
+                        isSelected
+                          ? "border-sky-400 bg-gradient-to-br from-sky-500/20 to-blue-600/10 shadow-lg shadow-sky-500/30 ring-2 ring-sky-400/50"
+                          : "border-white/10 bg-slate-950/60 hover:border-white/20"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`h-8 w-8 rounded-xl flex items-center justify-center border ${
+                          isSelected ? 'bg-sky-500 text-white border-sky-400' : 'bg-slate-900 text-sky-400 border-white/10'
+                        }`}>
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className={`h-4 w-4 rounded-full border flex items-center justify-center ${
+                          isSelected ? 'border-sky-400 bg-sky-400 text-slate-950' : 'border-slate-700 bg-slate-900'
+                        }`}>
+                          {isSelected && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-black text-white">{method.title}</h3>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{method.subtitle}</p>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
 
-                    <div className="space-y-1.5">
-                      <label className="block font-black text-slate-300 uppercase tracking-wider">
-                        Time Window
-                      </label>
-                      <div className="relative">
-                        <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <select
-                          value={timeSlot}
-                          onChange={(e) => setTimeSlot(e.target.value)}
-                          className="w-full rounded-xl border border-white/10 bg-slate-950 pl-10 pr-4 py-3 font-semibold text-white focus:outline-none focus:ring-2 focus:ring-sky-400 cursor-pointer"
-                        >
-                          <option value="08:00 AM - 10:00 AM" className="bg-slate-950">08:00 AM - 10:00 AM</option>
-                          <option value="10:00 AM - 12:00 PM" className="bg-slate-950">10:00 AM - 12:00 PM</option>
-                          <option value="04:00 PM - 06:00 PM" className="bg-slate-950">04:00 PM - 06:00 PM</option>
-                          <option value="06:00 PM - 08:00 PM" className="bg-slate-950">06:00 PM - 08:00 PM</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
+              {/* Dynamic Sub-Inputs */}
+              {paymentMethod === "Razorpay" && (
+                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 text-xs font-medium text-sky-300 animate-fade-in flex items-center gap-3">
+                  <ShieldCheck className="h-5 w-5 text-sky-400 flex-shrink-0" />
+                  <span>You will be prompted with Razorpay's secure checkout modal upon clicking Pay & Place Order.</span>
+                </div>
+              )}
 
-                  <div className="space-y-1.5 pt-2 text-xs">
-                    <label className="block font-black text-slate-300 uppercase tracking-wider">
-                      Special Instructions (Optional)
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. Ring doorbell twice, separate delicate silks..."
-                      value={specialInstructions}
-                      onChange={(e) => setSpecialInstructions(e.target.value)}
-                      className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400"
+              {paymentMethod === "UPI" && (
+                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 space-y-2 animate-fade-in">
+                  <label className="block text-xs font-black text-sky-300">Enter UPI ID / VPA</label>
+                  <input
+                    type="text"
+                    required
+                    value={upiId}
+                    onChange={(e) => setUpiId(e.target.value)}
+                    placeholder="e.g. username@oksbi or 9876543210@paytm"
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                  />
+                </div>
+              )}
+
+              {paymentMethod === "Card" && (
+                <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-4 space-y-3 animate-fade-in">
+                  <label className="block text-xs font-black text-sky-300">Card Information</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={19}
+                    value={cardNumber}
+                    onChange={(e) => setCardNumber(e.target.value)}
+                    placeholder="Card Number (4444 4444 4444 4444)"
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      required
+                      maxLength={5}
+                      value={cardExpiry}
+                      onChange={(e) => setCardExpiry(e.target.value)}
+                      placeholder="MM/YY"
+                      className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                    />
+                    <input
+                      type="password"
+                      required
+                      maxLength={4}
+                      value={cardCvv}
+                      onChange={(e) => setCardCvv(e.target.value)}
+                      placeholder="CVV"
+                      className="w-full rounded-xl border border-white/10 bg-slate-950 p-3 text-xs font-bold text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400"
                     />
                   </div>
                 </div>
+              )}
 
-                {/* Step 3: Payment with Interactive Sub-options */}
-                <div className="rounded-3xl border border-white/10 bg-slate-900/80 backdrop-blur-xl p-6 shadow-2xl space-y-4">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                    <h2 className="text-xs font-black text-sky-400 uppercase tracking-widest flex items-center gap-2">
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-sky-500 text-slate-950 text-xs font-black">3</span>
-                      Select Payment Method
-                    </h2>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2 text-xs font-bold">
-                    <label
-                      className={`flex items-center gap-3 rounded-2xl border p-4 cursor-pointer transition ${
-                        paymentMethod === "Online / UPI"
-                          ? "border-sky-400 bg-sky-500/10 shadow-lg"
-                          : "border-white/10 bg-slate-950/60 hover:border-white/20"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="payment"
-                        checked={paymentMethod === "Online / UPI"}
-                        onChange={() => setPaymentMethod("Online / UPI")}
-                        className="accent-sky-500"
-                      />
-                      <CreditCard className="h-5 w-5 text-sky-400 shrink-0" />
-                      <div>
-                        <p className="font-black text-white">Online / UPI / Card</p>
-                        <p className="text-[10px] text-slate-400 font-medium">GPay, PhonePe, Cards</p>
-                      </div>
-                    </label>
-
-                    <label
-                      className={`flex items-center gap-3 rounded-2xl border p-4 cursor-pointer transition ${
-                        paymentMethod === "Cash on Delivery"
-                          ? "border-sky-400 bg-sky-500/10 shadow-lg"
-                          : "border-white/10 bg-slate-950/60 hover:border-white/20"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="payment"
-                        checked={paymentMethod === "Cash on Delivery"}
-                        onChange={() => setPaymentMethod("Cash on Delivery")}
-                        className="accent-sky-500"
-                      />
-                      <Banknote className="h-5 w-5 text-emerald-400 shrink-0" />
-                      <div>
-                        <p className="font-black text-white">Pay at Doorstep (COD)</p>
-                        <p className="text-[10px] text-slate-400 font-medium">Pay cash/UPI upon delivery</p>
-                      </div>
-                    </label>
-                  </div>
-
-                  {paymentMethod === "Online / UPI" && (
-                    <div className="mt-4 rounded-2xl border border-sky-400/30 bg-slate-950/80 p-4 space-y-4 animate-fadeIn">
-                      <div className="flex items-center gap-3 border-b border-white/10 pb-3 text-xs font-bold">
-                        <button
-                          type="button"
-                          onClick={() => setOnlineType("upi")}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition ${
-                            onlineType === "upi"
-                              ? "bg-sky-500 text-white border-sky-400"
-                              : "bg-slate-900 text-slate-400 border-white/10"
-                          }`}
-                        >
-                          <Smartphone className="h-3.5 w-3.5" /> UPI ID / QR
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOnlineType("card")}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition ${
-                            onlineType === "card"
-                              ? "bg-sky-500 text-white border-sky-400"
-                              : "bg-slate-900 text-slate-400 border-white/10"
-                          }`}
-                        >
-                          <CreditCard className="h-3.5 w-3.5" /> Credit / Debit Card
-                        </button>
-                      </div>
-
-                      {onlineType === "upi" ? (
-                        <div className="space-y-2 text-xs">
-                          <label className="block font-black text-slate-300">Enter UPI ID</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. username@okhdfcbank or @paytm"
-                            value={upiId}
-                            onChange={(e) => setUpiId(e.target.value)}
-                            className="w-full rounded-xl border border-white/10 bg-slate-900 p-3 font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                          />
-                          <p className="text-[10px] text-slate-400">A payment verification request will be sent to your UPI app.</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3 text-xs">
-                          <div>
-                            <label className="block font-black text-slate-300 mb-1">Card Number</label>
-                            <input
-                              type="text"
-                              placeholder="4111 2222 3333 4444"
-                              value={cardNumber}
-                              onChange={(e) => setCardNumber(e.target.value)}
-                              className="w-full rounded-xl border border-white/10 bg-slate-900 p-3 font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="block font-black text-slate-300 mb-1">Expiry (MM/YY)</label>
-                              <input
-                                type="text"
-                                placeholder="MM/YY"
-                                value={cardExpiry}
-                                onChange={(e) => setCardExpiry(e.target.value)}
-                                className="w-full rounded-xl border border-white/10 bg-slate-900 p-3 font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                              />
-                            </div>
-                            <div>
-                              <label className="block font-black text-slate-300 mb-1">CVV</label>
-                              <input
-                                type="password"
-                                maxLength={4}
-                                placeholder="123"
-                                value={cardCvv}
-                                onChange={(e) => setCardCvv(e.target.value)}
-                                className="w-full rounded-xl border border-white/10 bg-slate-900 p-3 font-semibold text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+              {paymentMethod === "COD" && (
+                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-xs font-medium text-emerald-300 animate-fade-in">
+                  💵 Cash or online QR payment will be collected by our delivery partner during doorstep pickup.
                 </div>
+              )}
+            </div>
+          </div>
 
+          {/* Order Summary Sidebar */}
+          <div className="space-y-6">
+            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 backdrop-blur-xl space-y-6 shadow-2xl">
+              <h2 className="text-base font-black text-white border-b border-white/10 pb-4">Order Summary</h2>
+
+              <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                {cart.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-6">Cart is empty.</p>
+                ) : (
+                  cart.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300 font-semibold">{item.name} x {item.quantity || 1}</span>
+                      <span className="text-white font-black">₹{item.price * (item.quantity || 1)}</span>
+                    </div>
+                  ))
+                )}
               </div>
 
-              {/* Sidebar */}
-              <div className="lg:col-span-5 space-y-6">
-                <div className="rounded-3xl border border-white/10 bg-slate-900/80 backdrop-blur-xl p-6 shadow-2xl space-y-4 sticky top-24">
-                  <h2 className="text-sm font-black text-white uppercase tracking-wider border-b border-white/10 pb-3">
-                    Order Summary
-                  </h2>
-
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1 text-xs">
-                    {cartItems.map((item, idx) => (
-                      <div key={idx} className="flex justify-between font-semibold text-slate-300">
-                        <span>{item.name} × {item.quantity || 1}</span>
-                        <span className="text-white font-bold">₹{item.price * (item.quantity || 1)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 space-y-2 text-xs font-semibold text-slate-300 border-t border-white/10 pt-3">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Items Subtotal</span>
-                      <span className="text-white font-bold">₹{subtotal}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Pickup & Delivery Fee</span>
-                      <span className="text-emerald-400 font-bold">
-                        {deliveryFee === 0 ? "FREE" : `₹${deliveryFee}`}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-t border-white/10 pt-3 text-sm font-black text-white">
-                      <span>Total Payable</span>
-                      <span className="text-sky-400">₹{totalPayable}</span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 py-4 text-xs font-black text-white shadow-xl shadow-sky-500/25 transition active:scale-95 disabled:opacity-50"
-                  >
-                    <span>{submitting ? "Processing Payment & Order..." : `Pay ₹${totalPayable} & Place Order`}</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-
-                  <div className="flex items-center justify-center gap-2 text-[11px] font-bold text-slate-500 pt-1">
-                    <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                    <span>100% Encrypted Safe Checkout</span>
-                  </div>
+              <div className="border-t border-white/10 pt-4 space-y-2 text-xs">
+                <div className="flex justify-between text-slate-400">
+                  <span>Items Subtotal</span>
+                  <span className="text-white font-bold">₹{subtotal}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Pickup & Delivery Fee</span>
+                  <span className="text-emerald-400 font-bold">₹{deliveryFee}</span>
+                </div>
+                <div className="flex justify-between text-sm font-black pt-2 border-t border-white/10">
+                  <span className="text-white">Total Payable</span>
+                  <span className="text-sky-400">₹{totalPayable}</span>
                 </div>
               </div>
-            </form>
-          )}
-        </main>
-      </div>
+
+              <button
+                type="submit"
+                disabled={loading || cart.length === 0}
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 py-4 text-xs font-black text-white shadow-xl shadow-sky-500/30 transition hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+              >
+                {loading ? "Processing..." : `Pay ₹{totalPayable} & Place Order`} <ArrowRight className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 font-semibold">
+                <ShieldCheck className="h-4 w-4 text-emerald-400" /> 100% Encrypted Safe Checkout
+              </div>
+            </div>
+          </div>
+        </form>
+      </main>
     </div>
   );
 }

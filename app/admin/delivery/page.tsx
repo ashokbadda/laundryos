@@ -49,12 +49,12 @@ export default function AdminDeliveryPage() {
 
     const assigned = partners.find((p) => p.id.toString() === partnerId.toString());
 
-    // Primary attempt using driver_id
+    // Primary attempt using driver_id and setting status to PICKUP_ASSIGNED
     let { error } = await supabase
       .from("orders")
       .update({
         driver_id: partnerId,
-        status: "confirmed",
+        status: "PICKUP_ASSIGNED",
       })
       .eq("id", orderId);
 
@@ -64,7 +64,7 @@ export default function AdminDeliveryPage() {
         .from("orders")
         .update({
           delivery_partner_id: partnerId,
-          status: "confirmed",
+          status: "PICKUP_ASSIGNED",
         })
         .eq("id", orderId);
 
